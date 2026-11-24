@@ -9365,100 +9365,492 @@ window.verifyFinding=async function(id){
 };
 
 
-async function masterSpjView(){
-  if(!isDinas()){ 
-    $('#mainContent').innerHTML = msg('Modul ini hanya dapat digunakan oleh DINAS.'); 
-    return; 
+
+async function masterSpjView() {
+  if (!isDinas()) {
+    $('#mainContent').innerHTML = msg(
+      'Modul ini hanya dapat digunakan oleh DINAS.'
+    );
+    return;
   }
-  
-  // OPTIMASI: Manfaatkan cache master lokal untuk komponen SPJ
+
+  // =====================================================
+  // 1. AMBIL DATA DARI BACKEND
+  // =====================================================
+
   const [cfg, indRes, perRes] = await Promise.all([
-    api('getFrekuensiPenilaianSPJ').catch(() => ({ frekuensi: '', tahun: new Date().getFullYear() })),
-    api('getMasterIndikator'), 
+    api('getFrekuensiPenilaianSPJ').catch(() => ({
+      frekuensi: '',
+      tahun: new Date().getFullYear()
+    })),
+
+    api('getMasterIndikator'),
+
     api('getPeriodeSPJ')
   ]);
-  
-  const spj = await ensureMasters() || [];
-  const inds = indRes.data || [], pers = perRes.data || [];
-  const freq = String(cfg.frekuensi || perRes.frekuensi || '').toUpperCase();
-  const activePeriodId = String(cfg.periode_aktif || perRes.periode_aktif || '');
-  const rawYear = Number(cfg.tahun || perRes.tahun || new Date().getFullYear());
-  const year = rawYear>=2000&&rawYear<=2100 ? Math.floor(rawYear) : new Date().getFullYear();
-  const freqLabel = freq === 'BULANAN' ? 'Bulanan' : freq === 'TRIWULANAN' ? 'Triwulanan' : freq === 'SEMESTERAN' ? 'Semesteran' : freq === 'TAHUNAN' ? 'Tahunan' : 'Belum dipilih';
-  const activePeriods = pers.filter(x => Number(x.tahun) === year && String(x.frekuensi || '').toUpperCase() === freq);
 
-  // OPTIMASI: Rendering baris tabel menggunakan .map().join('') secara bersih di memori
+  const spj = await ensureMasters() || [];
+
+  const inds = Array.isArray(indRes.data)
+    ? indRes.data : [];
+
+  const pers = Array.isArray(perRes.data)
+    ? perRes.data : [];
+
+  // =====================================================
+  // 2. KONFIGURASI FREKUENSI DAN PERIODE
+  // =====================================================
+
+  const freq = String(
+    cfg.frekuensi || perRes.frekuensi || ''
+  ).toUpperCase();
+
+  const activePeriodId = String(
+    cfg.periode_aktif || perRes.periode_aktif || ''
+  );
+
+  const rawYear = Number(
+    cfg.tahun ||
+    perRes.tahun ||
+    new Date().getFullYear()
+  );
+
+  const year =
+    rawYear >= 2000 && rawYear <= 2100
+      ? Math.floor(rawYear)
+      : new Date().getFullYear();
+
+  const freqLabel =
+    freq === 'BULANAN' ? 'Bulanan' :
+    freq === 'TRIWULANAN' ? 'Triwulanan' :
+    freq === 'SEMESTERAN' ? 'Semesteran' :
+    freq === 'TAHUNAN' ? 'Tahunan' :
+    'Belum dipilih';
+
+  // =====================================================
+  // 3. FILTER PERIODE
+  // =====================================================
+  // Header periode_spj tidak memiliki kolom frekuensi.
+  // Karena itu, frekuensi pada setiap baris boleh kosong.
+  // Jika tersedia, frekuensinya tetap harus cocok.
+  // =====================================================
+
+  const activePeriods = pers.filter(x => {
+    const rowYear = Number(x.tahun);
+
+    const rowFreq = String(
+      x.frekuensi || ''
+    ).trim().toUpperCase();
+
+    const yearMatches = rowYear === year;
+
+    const freqMatches =
+      !rowFreq ||
+      !freq ||
+      rowFreq === freq;
+
+    return yearMatches && freqMatches;
+  });
+
+  // =====================================================
+  // 4. FORMAT TANGGAL
+  // =====================================================
+
+  function formatPeriodDate(value) {
+    if (!value) return '-';
+
+    const s = String(value).trim();
+
+    // Mengambil tanggal kalender dari format:
+    // 2026-06-30
+    // 2026-06-30T17:00:00.000Z
+    const match = s.match(
+      /^(\d{4})-(\d{2})-(\d{2})/
+    );
+
+    if (match) {
+      return `${match[3]}-${match[2]}-${match[1]}`;
+    }
+
+    return s;
+  }
+
+  // =====================================================
+  // 5. DIAGNOSTIK FRONTEND
+  // =====================================================
+
+  console.log('[QA38 PERIOD DIAGNOSTIC]', {
+    frequency: freq,
+    year: year,
+    activePeriodId: activePeriodId,
+    totalFromBackend: pers.length,
+    totalAfterFilter: activePeriods.length,
+    firstPeriod: pers[0] || null,
+    junePeriod: pers.find(x =>
+      String(x.id_periode) === 'PER-2026-06'
+    ) || null,
+    julyPeriod: pers.find(x =>
+      String(x.id_periode) === 'PER-2026-07'
+    ) || null
+  });
+
+  // =====================================================
+  // 6. RENDER MASTER SPJ
+  // =====================================================
+
   const spjRows = spj.map(x => `
     <tr>
       <td>${esc(x.kode_spj)}</td>
       <td>${esc(x.nama_spj)}</td>
       <td>${esc(x.urutan)}</td>
-      <td>${badge(x.status_aktif, x.status_aktif === 'AKTIF' ? 'success' : 'warning')}</td>
-    </tr>`).join('') || emptyRow(4);
+      <td>${badge(
+        x.status_aktif,
+        x.status_aktif === 'AKTIF'
+          ? 'success' : 'warning'
+      )}</td>
+    </tr>
+  `).join('') || emptyRow(4);
+
+  // =====================================================
+  // 7. RENDER INDIKATOR
+  // =====================================================
 
   const indRows = inds.map(x => `
     <tr>
       <td>${esc(x.kode_indikator)}</td>
       <td>${esc(x.nama_indikator)}</td>
-      <td>${esc(spj.find(s => String(s.id_spj) === String(x.id_spj))?.nama_spj || x.id_spj)}</td>
-      <td>${String(x.metode_pemeriksaan || '').toUpperCase().includes('RISK_ENGINE') ? 'DINAMIS' : esc(x.bobot)}</td>
-      <td>${badge(x.status_aktif, x.status_aktif === 'AKTIF' ? 'success' : 'warning')}</td>
-    </tr>`).join('') || emptyRow(5);
+      <td>${esc(
+        spj.find(s =>
+          String(s.id_spj) === String(x.id_spj)
+        )?.nama_spj || x.id_spj
+      )}</td>
+      <td>${
+        String(x.metode_pemeriksaan || '')
+          .toUpperCase()
+          .includes('RISK_ENGINE')
+            ? 'DINAMIS'
+            : esc(x.bobot)
+      }</td>
+      <td>${badge(
+        x.status_aktif,
+        x.status_aktif === 'AKTIF'
+          ? 'success' : 'warning'
+      )}</td>
+    </tr>
+  `).join('') || emptyRow(5);
+
+  // =====================================================
+  // 8. RENDER PERIODE
+  // =====================================================
 
   const perRows = activePeriods.map(x => `
     <tr>
-      <td>${esc(x.nama_periode)}</td>
-      <td>${esc(rc2SafePeriodYear_(x)||year)}</td>
+      <td>${esc(x.nama_periode || x.id_periode)}</td>
+      <td>${esc(rc2SafePeriodYear_(x) || year)}</td>
       <td>${esc(x.frekuensi || freqLabel)}</td>
-      <td>${esc(String(x.tanggal_mulai || '-').replace(/T00:00:00\.000Z$/, ''))}</td>
-      <td>${esc(String(x.tanggal_selesai || '-').replace(/T00:00:00\.000Z$/, ''))}</td>
-      <td>${badge(x.status, x.status === 'AKTIF' ? 'success' : 'warning')}</td>
-    </tr>`).join('') || emptyRow(6);
+      <td>${esc(formatPeriodDate(x.tanggal_mulai))}</td>
+      <td>${esc(formatPeriodDate(x.tanggal_selesai))}</td>
+      <td>${badge(
+        x.status,
+        x.status === 'AKTIF'
+          ? 'success' : 'warning'
+      )}</td>
+    </tr>
+  `).join('') || emptyRow(6);
 
-  $('#mainContent').innerHTML = head('Pengaturan Penilaian SPJ', 'DINAS cukup menentukan frekuensi penilaian. Periode dibuat otomatis oleh sistem.') +
+  // =====================================================
+  // 9. RENDER HALAMAN
+  // =====================================================
+
+  $('#mainContent').innerHTML =
+    head(
+      'Pengaturan Penilaian SPJ',
+      'DINAS cukup menentukan frekuensi penilaian. Periode dibuat otomatis oleh sistem.'
+    ) +
+
     `<div class="panel" style="border-top:4px solid var(--primary)">
       <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap">
-        <div><h3 style="margin:0">Frekuensi Penilaian</h3><div class="muted" style="margin-top:5px">Pilih sekali untuk tahun penilaian. Sistem otomatis membuat periode dan menggunakannya untuk seluruh sekolah.</div></div>
-        <span class="badge badge-${freq ? 'success' : 'warning'}">${esc(freqLabel)} • ${esc(year)}</span>
+        <div>
+          <h3 style="margin:0">Frekuensi Penilaian</h3>
+          <div class="muted" style="margin-top:5px">
+            Pilih sekali untuk tahun penilaian.
+            Sistem otomatis membuat periode dan menggunakannya untuk seluruh sekolah.
+          </div>
+        </div>
+        <span class="badge badge-${freq ? 'success' : 'warning'}">
+          ${esc(freqLabel)} • ${esc(year)}
+        </span>
       </div>
+
       <div class="form-grid" style="margin-top:16px">
-        <div class="field"><label>Tahun Penilaian</label><input id="cfgTahunPenilaian" type="number" min="2020" max="2100" value="${esc(year)}"></div>
-        <div class="field"><label>Frekuensi</label><select id="cfgFrekuensiPenilaian">
-          <option value="BULANAN" ${freq === 'BULANAN' ? 'selected' : ''}>Bulanan</option>
-          <option value="TRIWULANAN" ${freq === 'TRIWULANAN' ? 'selected' : ''}>Triwulanan</option>
-          <option value="SEMESTERAN" ${freq === 'SEMESTERAN' ? 'selected' : ''}>Semesteran</option>
-          <option value="TAHUNAN" ${freq === 'TAHUNAN' ? 'selected' : ''}>Tahunan</option>
-        </select></div>
+        <div class="field">
+          <label>Tahun Penilaian</label>
+          <input
+            id="cfgTahunPenilaian"
+            type="number"
+            min="2020"
+            max="2100"
+            value="${esc(year)}"
+          >
+        </div>
+
+        <div class="field">
+          <label>Frekuensi</label>
+          <select id="cfgFrekuensiPenilaian">
+            <option value="BULANAN" ${freq === 'BULANAN' ? 'selected' : ''}>Bulanan</option>
+            <option value="TRIWULANAN" ${freq === 'TRIWULANAN' ? 'selected' : ''}>Triwulanan</option>
+            <option value="SEMESTERAN" ${freq === 'SEMESTERAN' ? 'selected' : ''}>Semesteran</option>
+            <option value="TAHUNAN" ${freq === 'TAHUNAN' ? 'selected' : ''}>Tahunan</option>
+          </select>
+        </div>
       </div>
-      <div class="toolbar"><button class="btn btn-primary" id="btnSimpanFrekuensi">✓ Terapkan Frekuensi</button></div>
+
+      <div class="toolbar">
+        <button class="btn btn-primary" id="btnSimpanFrekuensi">
+          ✓ Terapkan Frekuensi
+        </button>
+      </div>
+
       <div id="freqConfigMsg"></div>
     </div>` +
-    `<div class="panel" style="border-left:4px solid var(--success)"><h3 class="section-title" style="margin-top:0">Periode Penilaian Aktif</h3><p class="muted">Pilih satu periode yang sedang dinilai. Dokumen dan transaksi di periode lain tetap tersimpan sebagai arsip, tetapi tidak masuk perhitungan penilaian aktif.</p><div class="form-grid"><div class="field"><label>Periode aktif</label><select id="cfgActiveAssessmentPeriod"><option value="">-- Pilih periode aktif --</option>${activePeriods.map(x=>`<option value="${esc(x.id_periode)}" ${String(x.id_periode)===activePeriodId?'selected':''}>${esc(x.nama_periode||x.id_periode)}</option>`).join('')}</select></div><div class="field" style="display:flex;align-items:end"><button class="btn btn-primary" id="btnSaveActiveAssessmentPeriod" type="button">Tetapkan Periode Aktif</button></div></div><div id="activePeriodConfigMsg">${activePeriodId?`<span class="badge badge-success">Aktif: ${esc(activePeriods.find(x=>String(x.id_periode)===activePeriodId)?.nama_periode||activePeriodId)}</span>`:'<span class="badge badge-warning">Belum ada periode aktif yang dikunci</span>'}</div></div>` +
-    `<div class="panel"><h3 class="section-title" style="margin-top:0">Periode Otomatis (${activePeriods.length})</h3><div class="muted" style="margin-bottom:10px">Sistem membuat ${freq === 'BULANAN' ? '12 periode bulanan' : freq === 'TRIWULANAN' ? '4 periode triwulanan' : freq === 'SEMESTERAN' ? '2 periode semesteran' : freq === 'TAHUNAN' ? '1 periode tahunan' : 'periode sesuai pilihan'} tanpa input tanggal manual.</div><div class="table-wrap"><table class="friendly-table"><thead><tr><th>Nama</th><th>Tahun</th><th>Frekuensi</th><th>Mulai</th><th>Selesai</th><th>Status</th></tr></thead><tbody>${perRows}</tbody></table></div></div>` +
-    `<div class="panel"><h3 class="section-title" style="margin-top:0">Standar Pemeriksaan Otomatis</h3><p class="muted">Indikator bawaan Risk Engine tampil otomatis. DINAS tidak perlu membuat indikator atau rule satu per satu; bobot yang ditampilkan sebagai DINAMIS dihitung ulang berdasarkan data pemeriksaan.</p><div class="table-wrap"><table class="friendly-table"><thead><tr><th>Kode</th><th>Indikator</th><th>Komponen</th><th>Bobot</th><th>Status</th></tr></thead><tbody>${indRows}</tbody></table></div></div>` +
-    `<div class="panel"><h3 class="section-title" style="margin-top:0">Master SPJ Sistem</h3><div class="table-wrap"><table class="friendly-table"><thead><tr><th>Kode</th><th>Nama</th><th>Urutan</th><th>Status</th></tr></thead><tbody>${spjRows}</tbody></table></div></div>`;
+
+    `<div class="panel" style="border-left:4px solid var(--success)">
+      <h3 class="section-title" style="margin-top:0">
+        Periode Penilaian Aktif
+      </h3>
+
+      <p class="muted">
+        Pilih satu periode yang sedang dinilai.
+        Dokumen dan transaksi di periode lain tetap tersimpan sebagai arsip,
+        tetapi tidak masuk perhitungan penilaian aktif.
+      </p>
+
+      <div class="form-grid">
+        <div class="field">
+          <label>Periode aktif</label>
+
+          <select id="cfgActiveAssessmentPeriod">
+            <option value="">-- Pilih periode aktif --</option>
+
+            ${activePeriods.map(x => `
+              <option
+                value="${esc(x.id_periode)}"
+                ${String(x.id_periode) === activePeriodId ? 'selected' : ''}
+              >
+                ${esc(x.nama_periode || x.id_periode)}
+              </option>
+            `).join('')}
+          </select>
+        </div>
+
+        <div class="field" style="display:flex;align-items:end">
+          <button
+            class="btn btn-primary"
+            id="btnSaveActiveAssessmentPeriod"
+            type="button"
+          >
+            Tetapkan Periode Aktif
+          </button>
+        </div>
+      </div>
+
+      <div id="activePeriodConfigMsg">
+        ${
+          activePeriodId
+            ? `<span class="badge badge-success">
+                Aktif: ${esc(
+                  activePeriods.find(x =>
+                    String(x.id_periode) === activePeriodId
+                  )?.nama_periode || activePeriodId
+                )}
+              </span>`
+            : '<span class="badge badge-warning">Belum ada periode aktif yang dikunci</span>'
+        }
+      </div>
+    </div>` +
+
+    `<div class="panel">
+      <h3 class="section-title" style="margin-top:0">
+        Periode Otomatis (${activePeriods.length})
+      </h3>
+
+      <div class="muted" style="margin-bottom:10px">
+        Sistem membuat ${
+          freq === 'BULANAN' ? '12 periode bulanan' :
+          freq === 'TRIWULANAN' ? '4 periode triwulanan' :
+          freq === 'SEMESTERAN' ? '2 periode semesteran' :
+          freq === 'TAHUNAN' ? '1 periode tahunan' :
+          'periode sesuai pilihan'
+        } tanpa input tanggal manual.
+      </div>
+
+      <div class="table-wrap">
+        <table class="friendly-table">
+          <thead>
+            <tr>
+              <th>Nama</th>
+              <th>Tahun</th>
+              <th>Frekuensi</th>
+              <th>Mulai</th>
+              <th>Selesai</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>${perRows}</tbody>
+        </table>
+      </div>
+    </div>` +
+
+    `<div class="panel">
+      <h3 class="section-title" style="margin-top:0">
+        Standar Pemeriksaan Otomatis
+      </h3>
+
+      <p class="muted">
+        Indikator bawaan Risk Engine tampil otomatis.
+        DINAS tidak perlu membuat indikator atau rule satu per satu;
+        bobot yang ditampilkan sebagai DINAMIS dihitung ulang
+        berdasarkan data pemeriksaan.
+      </p>
+
+      <div class="table-wrap">
+        <table class="friendly-table">
+          <thead>
+            <tr>
+              <th>Kode</th>
+              <th>Indikator</th>
+              <th>Komponen</th>
+              <th>Bobot</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>${indRows}</tbody>
+        </table>
+      </div>
+    </div>` +
+
+    `<div class="panel">
+      <h3 class="section-title" style="margin-top:0">
+        Master SPJ Sistem
+      </h3>
+
+      <div class="table-wrap">
+        <table class="friendly-table">
+          <thead>
+            <tr>
+              <th>Kode</th>
+              <th>Nama</th>
+              <th>Urutan</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>${spjRows}</tbody>
+        </table>
+      </div>
+    </div>`;
+
+  // =====================================================
+  // 10. TOMBOL TERAPKAN FREKUENSI
+  // =====================================================
 
   $('#btnSimpanFrekuensi').onclick = async () => {
-    const tahun = $('#cfgTahunPenilaian').value, frekuensi = $('#cfgFrekuensiPenilaian').value;
-    const out = $('#freqConfigMsg'); 
-    out.innerHTML = loading('Membuat periode otomatis...');
-    try { 
-      await api('simpanFrekuensiPenilaianSPJ', { data: { tahun, frekuensi } }); 
-      toast(`Frekuensi ${frekuensi.toLowerCase()} berhasil diterapkan untuk ${tahun}.`, 'ok', 3500); 
-      await masterSpjView(); 
-    } catch(e) { 
-      out.innerHTML = msg(errorText(e), 'error'); 
+    const tahun = $('#cfgTahunPenilaian').value;
+    const frekuensi = $('#cfgFrekuensiPenilaian').value;
+
+    const out = $('#freqConfigMsg');
+
+    out.innerHTML = loading(
+      'Membuat periode otomatis...'
+    );
+
+    try {
+      await api('simpanFrekuensiPenilaianSPJ', {
+        data: {
+          tahun,
+          frekuensi
+        }
+      });
+
+      toast(
+        `Frekuensi ${frekuensi.toLowerCase()} berhasil diterapkan untuk ${tahun}.`,
+        'ok',
+        3500
+      );
+
+      await masterSpjView();
+
+    } catch (e) {
+      out.innerHTML = msg(
+        errorText(e),
+        'error'
+      );
     }
   };
-  const activeBtn=$('#btnSaveActiveAssessmentPeriod');
-  if(activeBtn)activeBtn.onclick=async()=>{
-    const idPeriode=$('#cfgActiveAssessmentPeriod')?.value||'',out=$('#activePeriodConfigMsg');
-    if(!idPeriode){if(out)out.innerHTML=msg('Pilih periode yang akan dinilai.','warning');return;}
-    activeBtn.disabled=true;activeBtn.textContent='Menyimpan...';
-    try{const r=await api('simpanPeriodeAktifPenilaianSPJ',{data:{id_periode:idPeriode}});toast(r.message||'Periode aktif ditetapkan.','ok',3500);await masterSpjView();}
-    catch(e){if(out)out.innerHTML=msg(errorText(e),'error');}
-    finally{activeBtn.disabled=false;activeBtn.textContent='Tetapkan Periode Aktif';}
-  };
+
+  // =====================================================
+  // 11. TOMBOL TETAPKAN PERIODE AKTIF
+  // =====================================================
+
+  const activeBtn = $(
+    '#btnSaveActiveAssessmentPeriod'
+  );
+
+  if (activeBtn) {
+    activeBtn.onclick = async () => {
+
+      const idPeriode = $(
+        '#cfgActiveAssessmentPeriod'
+      )?.value || '';
+
+      const out = $(
+        '#activePeriodConfigMsg'
+      );
+
+      if (!idPeriode) {
+        if (out) {
+          out.innerHTML = msg(
+            'Pilih periode yang akan dinilai.',
+            'warning'
+          );
+        }
+        return;
+      }
+
+      activeBtn.disabled = true;
+      activeBtn.textContent = 'Menyimpan...';
+
+      try {
+        const r = await api(
+          'simpanPeriodeAktifPenilaianSPJ',
+          {
+            data: {
+              id_periode: idPeriode
+            }
+          }
+        );
+
+        toast(
+          r.message || 'Periode aktif ditetapkan.',
+          'ok',
+          3500
+        );
+
+        await masterSpjView();
+
+      } catch (e) {
+        if (out) {
+          out.innerHTML = msg(
+            errorText(e),
+            'error'
+          );
+        }
+
+      } finally {
+        activeBtn.disabled = false;
+        activeBtn.textContent = 'Tetapkan Periode Aktif';
+      }
+    };
+  }
 }
 
 function openMasterModal(title, body, onSubmit){
