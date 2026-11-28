@@ -2777,8 +2777,19 @@ initSecureCaptcha();
 
 async function doLogin(e){
   e.preventDefault();
-  const form=e.currentTarget||$('#loginForm');
-  const submit=form?.querySelector('button[type="submit"]');
+
+  // Ambil elemen form secara langsung.
+  // Jangan menggunakan e.currentTarget karena handler
+  // dapat dipanggil melalui delegated listener pada document.
+  const form = document.getElementById('loginForm');
+
+  if (!form) {
+    console.error('[LOGIN] Elemen #loginForm tidak ditemukan.');
+    $('#authMsg').innerHTML = msg('Form login tidak ditemukan. Muat ulang halaman.');
+    return;
+  }
+
+  const submit = form.querySelector('button[type="submit"]');
   // Guard di browser: satu formulir login hanya boleh memiliki satu request aktif.
   if(window._simpelLoginInFlight)return;
   if($('#captchaInput').value !== 'verified' || !state.loginChallengeQA25){
