@@ -2207,7 +2207,7 @@ body[data-role] .content .spj-simple-details pre{white-space:pre-wrap;max-height
 const V10_VERSION = 'SIMPEL-SPJ-RELEASE-1.0-CANDIDATE';
 
 const FRONTEND_BUILD_ID = 'SIMPEL_SPJ_QA38_4_3_DASHBOARD_INTEGRATION';
-  const API_URL = 'https://script.google.com/macros/s/AKfycbzmlLJqZwDAy4UA_8IK8F3DWBodYlM6tKiRppPVCk9P11YMZ-kC0kYYeESL_fG7gUIV/exec';
+  const API_URL = 'https://script.google.com/macros/s/AKfycbyWvJXKr1QZ1zwbeJDoULTUihycj1771SsDlGFy8jnuF4i3DsEbHXlcJU48VDAg17fqDA/exec';
 
 
 // 1. DEKLARASIKAN ROLE_MENUS DI SINI (PALING ATAS)
@@ -2695,7 +2695,7 @@ function authView(notice=''){
 
             </div>
 
-            <div id="authMsg" role="status" aria-live="polite" aria-atomic="true"></div>
+            <div id="authMsg"></div>
 
             <button class="v219-auth-submit" type="submit">Masuk SIMPEL SPJ</button>
           </form>
@@ -2716,7 +2716,6 @@ function authView(notice=''){
 
 
 async function startServerLoginChallengeQA25_(button){
-  if(__simpelLoginInFlight || __simpelLoginAuthenticated)return;
   const input=document.getElementById('captchaInput');
   const status=document.getElementById('secureCaptchaStatus');
   const action=button?.querySelector('.secure-check-action');
@@ -2776,122 +2775,79 @@ document.addEventListener('click',function(e){
 });
 initSecureCaptcha();
 
-let __simpelLoginInFlight = false;
-let __simpelLoginAuthenticated = false;
-
-function __setLoginBusyQA26_(busy, label){
-  const form=document.getElementById('loginForm');
-  if(!form)return;
-  const submit=form.querySelector('button[type="submit"]');
-  const captcha=document.getElementById('secureCaptchaLogo');
-  const username=document.getElementById('username');
-  const password=document.getElementById('password');
-  if(submit){
-    submit.disabled=!!busy;
-    submit.classList.toggle('is-loading',!!busy && !__simpelLoginAuthenticated);
-    if(busy){
-      submit.setAttribute('aria-busy','true');
-      submit.dataset.idleLabel=submit.dataset.idleLabel||submit.textContent.trim();
-      submit.textContent=label||'Memeriksa akun...';
-    }else{
-      submit.removeAttribute('aria-busy');
-      submit.textContent=submit.dataset.idleLabel||'Masuk SIMPEL SPJ';
-    }
-  }
-  // Hindari perubahan identitas/kredensial atau challenge di tengah autentikasi.
-  [captcha,username,password].forEach(el=>{if(el)el.disabled=!!busy;});
-}
-
 async function doLogin(e){
-  if(e)e.preventDefault();
-  if(__simpelLoginInFlight || __simpelLoginAuthenticated)return;
-
-  const form=document.getElementById('loginForm');
-  const messageBox=document.getElementById('authMsg');
-  const captchaButton=document.getElementById('secureCaptchaLogo');
-  const captchaStatus=document.getElementById('secureCaptchaStatus');
-  const captchaInput=document.getElementById('captchaInput');
-  if(!form)return;
-
-  if(!captchaInput || captchaInput.value!=='verified' || !state.loginChallengeQA25){
-    if(messageBox)messageBox.innerHTML=msg('Lakukan verifikasi keamanan terlebih dahulu.');
-    if(captchaInput)captchaInput.value='';
-    captchaButton?.focus();
+  e.preventDefault();
+  const form=e.currentTarget||$('#loginForm');
+  const submit=form?.querySelector('button[type="submit"]');
+  // Guard di browser: satu formulir login hanya boleh memiliki satu request aktif.
+  if(window._simpelLoginInFlight)return;
+  if($('#captchaInput').value !== 'verified' || !state.loginChallengeQA25){
+    $('#authMsg').innerHTML=msg('Lakukan verifikasi keamanan terlebih dahulu.');
+    $('#captchaInput').value='';
+    document.getElementById('secureCaptchaLogo')?.focus();
     return;
   }
-  const username=document.getElementById('username')?.value.trim()||'';
-  const password=document.getElementById('password')?.value||'';
-  if(!username||!password){
-    if(messageBox)messageBox.innerHTML=msg('Username dan kata sandi wajib diisi.');
-    return;
+  window._simpelLoginInFlight=true;
+  const originalText=submit?.textContent||'Masuk SIMPEL SPJ';
+  if(submit){
+    submit.disabled=true;
+    submit.setAttribute('aria-busy','true');
+    submit.textContent='Sedang masuk…';
   }
-
-  // Kunci dipasang secara sinkron sebelum operasi async pertama.
-  __simpelLoginInFlight=true;
-  __setLoginBusyQA26_(true,'Memeriksa akun...');
-  if(messageBox)messageBox.innerHTML='<p class="muted" role="status">Permintaan diterima. Sistem sedang memeriksa akun Anda. Mohon tunggu dan jangan menekan tombol lagi.</p>';
-  const proof=state.loginChallengeQA25;
-  state.loginChallengeQA25=null;
-  captchaInput.value='';
-
-  let authenticated=false;
+  form?.classList.add('login-submitting');
+  const username=$('#username')?.value.trim()||'';
+  const password=$('#password')?.value||'';
   try{
+    const proof=state.loginChallengeQA25;
+    state.loginChallengeQA25=null;
+    $('#captchaInput').value='';
     const r=await api('login',{
-      username:username,
-      password:password,
+      username,
+      password,
       challenge_id:proof.challenge_id,
       proof_counter:proof.proof_counter
     });
-    if(!r || !r.token)throw new Error('Server tidak mengembalikan sesi login yang sah.');
-
     clearSensitiveFrontendCaches_('login-transition');
-    state.token=r.token;
-    state.user=r.user||{};
-    if(isSchool() && !state.user.npsn && /^\d{8}$/.test(String(state.user.username||''))){
-      state.user.npsn=String(state.user.username);
+    state.token=r.token; state.user=r.user || {};
+    if(isSchool() && !state.user.npsn && /^\\d{8}$/.test(String(state.user.username||''))){
+      state.user.npsn = String(state.user.username);
     }
     sessionStorage.setItem('simpel_token',state.token);
-    authenticated=true;
-    __simpelLoginAuthenticated=true;
-    __setLoginBusyQA26_(true,'Login berhasil. Menyiapkan halaman...');
-    if(messageBox)messageBox.innerHTML=msg('Login berhasil. Menyiapkan halaman utama...','ok');
 
-    // Setelah autentikasi berhasil, jangan membuka ulang form login hanya karena
-    // dashboard gagal dimuat. Itu dapat membuat sesi kedua tanpa kebutuhan.
-    const welcomePromise=showWelcomeAnimation();
-    try{
-      await startApp();
-      startSessionHeartbeat();
-      await welcomePromise;
-    }catch(viewErr){
-      if(messageBox)messageBox.innerHTML=msg('Login berhasil, tetapi halaman utama belum dapat dimuat. Muat ulang halaman untuk melanjutkan tanpa mengirim login ulang. '+errorText(viewErr),'warning');
-      const submit=form.querySelector('button[type="submit"]');
-      if(submit){submit.disabled=true;submit.classList.remove('is-loading');submit.textContent='Login berhasil';}
-      return;
-    }
+    // Tampilkan layar Selamat Datang TERLEBIH DAHULU sebagai lapisan penuh.
+    // Halaman login tetap tertutup di bawahnya sehingga tidak pernah terlihat
+    // kembali. Dashboard dibangun di belakang layar selama animasi berlangsung.
+    const welcomePromise = showWelcomeAnimation();
+    await startApp();
+    startSessionHeartbeat();
+    await welcomePromise;
   }catch(err){
-    // Kegagalan jaringan bersifat ambigu: server mungkin sudah memproses login.
-    // Jangan auto-retry. Minta verifikasi baru dan satu percobaan manual.
-    __simpelLoginInFlight=false;
-    __simpelLoginAuthenticated=false;
+    const authMsg=$('#authMsg');
+    if(authMsg)authMsg.innerHTML=msg(errorText(err));
+    // Challenge bersifat sekali pakai; pengguna perlu melakukan verifikasi lagi
+    // setelah login gagal, tetapi tombol kembali aktif.
     state.loginChallengeQA25=null;
-    if(captchaInput)captchaInput.value='';
-    if(captchaButton){captchaButton.classList.remove('checked');captchaButton.setAttribute('aria-pressed','false');}
-    if(captchaStatus)captchaStatus.textContent='Silakan verifikasi ulang sebelum mencoba masuk';
-    const networkAmbiguous=err&&(err.code==='NETWORK_FETCH_FAILED'||err.code==='STALE_SESSION_RESPONSE'||/Failed to fetch|tidak dapat dijangkau|respons bukan JSON/i.test(String(err.message||'')));
-    if(messageBox){
-      messageBox.innerHTML=msg(networkAmbiguous
-        ? 'Koneksi terputus sehingga hasil login belum dapat dipastikan. Jangan menekan berulang kali. Periksa koneksi, verifikasi keamanan kembali, lalu coba sekali lagi.'
-        : errorText(err));
+    const captcha=$('#captchaInput');
+    if(captcha)captcha.value='';
+    const captchaButton=$('#secureCaptchaLogo');
+    if(captchaButton){
+      captchaButton.classList.remove('checked');
+      captchaButton.setAttribute('aria-pressed','false');
+      const status=$('#secureCaptchaStatus');
+      if(status)status.textContent='Silakan verifikasi keamanan kembali';
+      const action=captchaButton.querySelector('.secure-check-action');
+      if(action)action.textContent='Verifikasi';
     }
-    __setLoginBusyQA26_(false);
-    return;
-  }
-
-  // Sukses: kunci tetap aktif selama aplikasi berada pada sesi terautentikasi.
-  if(authenticated){
-    const submit=form.querySelector('button[type="submit"]');
-    if(submit){submit.disabled=true;submit.classList.remove('is-loading');submit.removeAttribute('aria-busy');submit.textContent='Sudah masuk';}
+  }finally{
+    window._simpelLoginInFlight=false;
+    // startApp mengganti tampilan saat berhasil; pulihkan tombol hanya bila
+    // formulir login masih terpasang (misalnya ketika autentikasi gagal).
+    if(submit&&document.contains(submit)){
+      submit.disabled=false;
+      submit.removeAttribute('aria-busy');
+      submit.textContent=originalText;
+    }
+    if(form&&document.contains(form))form.classList.remove('login-submitting');
   }
 }
 
@@ -2986,13 +2942,14 @@ window.showRegisterView = function(e) {
 
             <div class="field" id="fieldNipGroup" style="display:none">
               <label>NIP / ID Pengawas</label>
-              <input id="regNip" placeholder="Contoh: 196611061986081001" oninput="syncPengawasUsername(this.value)" onblur="loadPublicRegistrationWindow()">
+              <input id="regNip" inputmode="numeric" maxlength="18" pattern="[0-9]{18}" autocomplete="off" placeholder="Masukkan 18 digit NIP" oninput="syncPengawasUsername(this.value); lookupPengawasByNip(this.value)" onblur="loadPublicRegistrationWindow()">
               <small class="muted">Username login akan terisi otomatis dari NIP/ID.</small>
             </div>
 
             <div class="field" id="fieldNamaPengawasGroup" style="display:none">
-              <label>Nama Lengkap & Gelar Pengawas</label>
-              <input id="regNamaPengawas" placeholder="Contoh: Drs. Ahmad, M.Pd.">
+              <label>Nama Lengkap & Gelar Pengawas (Otomatis dari Master DINAS)</label>
+              <input id="regNamaPengawas" placeholder="Masukkan NIP untuk memuat nama resmi" readonly aria-readonly="true" autocomplete="off">
+              <small id="regNamaPengawasStatus" class="muted">Nama akan terisi otomatis setelah NIP cocok dengan Master Pengawas DINAS.</small>
             </div>
 
             <div class="field">
@@ -3042,6 +2999,10 @@ window.showRegisterView = function(e) {
 
     const msgBox = $('#regMsg');
     const submitBtn = document.querySelector('#registerForm button[type="submit"]');
+    if(roleVal === 'PENGAWAS' && window._pengawasIdentityVerified !== true) {
+      msgBox.innerHTML = msg('NIP belum berhasil diverifikasi dengan Master Pengawas DINAS. Periksa kembali NIP.', 'error');
+      return;
+    }
     if(submitBtn?.dataset.scheduleLocked==='1') return;
     if(submitBtn?.disabled) return;
     if(submitBtn){
@@ -3127,6 +3088,44 @@ window.loadPublicRegistrationWindow = async function(){
   }
 };
 
+window._pengawasIdentityVerified = false;
+window._pengawasLookupRequest = 0;
+window.lookupPengawasByNip = async function(value) {
+  const nip = String(value || '').replace(/\D/g,'').slice(0,18);
+  const nameField = $('#regNamaPengawas');
+  const status = $('#regNamaPengawasStatus');
+  const submitBtn = document.querySelector('#registerForm button[type="submit"]');
+  window._pengawasIdentityVerified = false;
+  if(nameField) nameField.value = '';
+  if(status) status.textContent = nip.length === 18
+    ? 'Memeriksa NIP pada Master Pengawas DINAS...'
+    : 'Masukkan 18 digit NIP. Nama akan dimuat otomatis dari Master DINAS.';
+  if(nip.length !== 18) return;
+  const requestId = ++window._pengawasLookupRequest;
+  try {
+    const response = await api('getPublicPengawasByNip', {nip:nip});
+    if(requestId !== window._pengawasLookupRequest) return;
+    const data = response?.data || {};
+    if(!response?.success || !data.found || !data.nama_pengawas) {
+      if(status) status.textContent = data.message || 'NIP tidak ditemukan sebagai Pengawas AKTIF pada Master DINAS.';
+      if(submitBtn && $('#regRole')?.value === 'PENGAWAS') {
+        submitBtn.disabled = true;
+        submitBtn.dataset.scheduleLocked = '1';
+        submitBtn.textContent = 'NIP Belum Terverifikasi';
+      }
+      return;
+    }
+    if(nameField) nameField.value = data.nama_pengawas;
+    window._pengawasIdentityVerified = true;
+    if(status) status.textContent = 'Identitas terverifikasi dari Master DINAS.';
+    // Re-evaluate registration schedule after identity lookup.
+    await loadPublicRegistrationWindow();
+  } catch(error) {
+    if(requestId !== window._pengawasLookupRequest) return;
+    if(status) status.textContent = 'Verifikasi NIP gagal: ' + errorText(error);
+  }
+};
+
 window.syncPengawasUsername = function(val) {
   const usernameField = $('#regUsername');
   if(usernameField) {
@@ -3174,7 +3173,17 @@ window.toggleRegisterFields = function() {
     if(schoolOfficialsGroup) schoolOfficialsGroup.style.display = 'none';
     
     if(inpNamaSekolah) inpNamaSekolah.required = false;
-    if(inpNamaPengawas) inpNamaPengawas.required = true;
+    if(inpNamaPengawas) {
+      inpNamaPengawas.required = true;
+      inpNamaPengawas.readOnly = true;
+      inpNamaPengawas.setAttribute('aria-readonly','true');
+      inpNamaPengawas.style.background = '#f1f5f9';
+      inpNamaPengawas.style.cursor = 'not-allowed';
+      inpNamaPengawas.value = '';
+    }
+    window._pengawasIdentityVerified = false;
+    const pengawasStatus = $('#regNamaPengawasStatus');
+    if(pengawasStatus) pengawasStatus.textContent = 'Nama akan terisi otomatis setelah NIP cocok dengan Master Pengawas DINAS.';
     officialInputs.forEach(el=>el.required=false);
 
     if(labelUser) labelUser.textContent = 'Username Login Pengawas (Sinkron NIP)';
@@ -3184,6 +3193,10 @@ window.toggleRegisterFields = function() {
       inpUsername.style.cursor = 'not-allowed';
       inpUsername.value = $('#regNip')?.value.trim() || '';
     }
+  }
+  if(roleVal === 'PENGAWAS') {
+    const nipValue = $('#regNip')?.value || '';
+    if(nipValue.length === 18) lookupPengawasByNip(nipValue);
   }
   loadPublicRegistrationWindow();
 };
@@ -8808,20 +8821,35 @@ function renderDinasCenterTable(listSekolah, listPenugasan){
     </div>`;
 }
 
+// Periode Monitoring hanya dikelola oleh renderMonitoringGlobalView.
+// Panel OCR tidak boleh mengambil daftar periode sendiri atau menulis ulang
+// dropdown, karena proses inisialisasi/polling dapat menimpa pilihan pengguna.
+window.onMonitoringPeriodChange = function(value){
+  const period=String(value||'');
+  state.selectedPeriode=period;
+  refreshMonitoringProgressPeriod(period);
+  if(isDinas() && $('#dinasMassOcrPanel')){
+    window._dinasOcrStatusForce=true;
+    refreshDinasMassOcrStatus();
+  }
+};
+
 window.initDinasMassOcrPanel = async function(){
   if(!isDinas() || !$('#dinasMassOcrPanel'))return;
   const sel=$('#monitoringPeriodSelect'); if(!sel)return;
-  try{
-    const res=await safeApi('getPeriodeSPJ',{}, {data:[]});
-    const list=Array.isArray(res?.data)?res.data:[];
-    const activeId=String(res?.periode_aktif||'');
-    const active=list.filter(p=>String(p.status||'').toUpperCase()==='AKTIF' || (activeId&&String(p.id_periode)===activeId));
-    const choices=active.length?active:(activeId?list.filter(p=>String(p.id_periode)===activeId):[]);
-    sel.innerHTML='<option value="">-- Pilih periode aktif --</option>'+choices.map(p=>`<option value="${esc(p.id_periode)}">${esc(p.nama_periode||p.id_periode)}</option>`).join('');
-    if(choices.length===1)sel.value=String(choices[0].id_periode);
-    if(!choices.length)$('#massOcrDetail').textContent='Belum ada periode aktif yang dapat diproses.';
-    if(sel.value)refreshDinasMassOcrStatus();
-  }catch(e){$('#massOcrDetail').textContent=errorText(e);}
+  // Baca pilihan yang sudah ditetapkan oleh halaman Monitoring. Jangan
+  // mengganti innerHTML/value dropdown dari proses inisialisasi OCR.
+  const period=String(sel.value||state.selectedPeriode||'');
+  if(period && Array.from(sel.options||[]).some(o=>String(o.value)===period)){
+    sel.value=period;
+    state.selectedPeriode=period;
+  }
+  if(!period){
+    const detail=$('#massOcrDetail');
+    if(detail)detail.textContent='Pilih periode pada filter Monitoring untuk melihat status OCR.';
+    return;
+  }
+  await refreshDinasMassOcrStatus();
 };
 window.refreshDinasMassOcrStatus = async function(){
   const sel=$('#monitoringPeriodSelect'),summary=$('#massOcrSummary'),detail=$('#massOcrDetail');
@@ -8845,6 +8873,9 @@ window.refreshDinasMassOcrStatus = async function(){
       try{r=await pending;window._dinasOcrStatusCache[period]={at:Date.now(),value:r};}
       finally{delete window._dinasOcrStatusInflight[period];window._dinasOcrStatusForce=false;}
     }
+    // Respons status yang datang terlambat untuk periode sebelumnya tidak
+    // boleh memperbarui panel setelah pengguna berpindah periode.
+    if(String($('#monitoringPeriodSelect')?.value||'')!==period || !$('#dinasMassOcrPanel'))return;
     const c=r.counts||{},bc=r.bku_counts||{};
     const queued=Number(c.QUEUED||0)+Number(bc.QUEUED||0);
     const processing=Number(c.PROCESSING||0)+Number(bc.PROCESSING||0);
@@ -8918,7 +8949,23 @@ window.refreshDinasMassOcrStatus = async function(){
     if(liveCounts)liveCounts.innerHTML=`<span><b>${schoolDone.toLocaleString('id-ID')}</b> selesai</span><span><b>${schoolProcessing.toLocaleString('id-ID')}</b> sedang dibaca</span><span><b>${schoolQueued.toLocaleString('id-ID')}</b> menunggu</span><span><b>${Math.max(0,schoolTotal-schoolDone-schoolProcessing-schoolQueued).toLocaleString('id-ID')}</b> di luar target / gagal</span><span><b>${schoolTotal.toLocaleString('id-ID')}</b> total file terindeks</span>`;
     if(liveHint)liveHint.textContent=stopped?'Proses dihentikan. Hasil dan checkpoint tersimpan; tekan Mulai / Lanjutkan untuk meneruskan.':paused?'Proses dijeda. Tidak ada pekerjaan baru yang diambil untuk periode ini.':(wk.stalled?'Antrean belum bergerak dan heartbeat worker tidak baru. Periksa trigger serta log eksekusi.':(processing>0?'Ada dokumen yang sedang diproses. Status diperbarui otomatis setiap 30 detik.':(queued>0?'Antrean tersedia; worker belum tentu sedang membaca pada detik ini.':(inv.status==='COMPLETED'?'Inventaris selesai. Periksa status terminal dan perhatian per sekolah.':'Pilih Mulai / Lanjutkan OCR untuk memulai proses.'))));
     const startBtn=$('#massOcrStartBtn'),pauseBtn=$('#massOcrPauseBtn'),stopBtn=$('#massOcrStopBtn');
-    if(startBtn)startBtn.disabled=isRunning;
+    const startRequestPending=!!window._dinasOcrStartInflight;
+    const workerNeedsAttention=!!wk.stalled;
+    // Antrean yang hanya menunggu worker tidak otomatis mengunci tombol.
+    // Bila heartbeat macet, tombol dapat dipakai untuk meminta lanjut kembali.
+    const backendActivelyWorking=inventoryRunning||processing>0;
+    if(startBtn){
+      startBtn.disabled=startRequestPending||(backendActivelyWorking&&!workerNeedsAttention&&!paused&&!stopped);
+      startBtn.textContent=startRequestPending?'Mengirim perintah OCR…':
+        (workerNeedsAttention?'Coba lanjutkan OCR':
+        (backendActivelyWorking?'OCR sedang berjalan…':
+        (paused||stopped||queued>0?'Mulai / Lanjutkan OCR':'Mulai Pembacaan OCR')));
+      startBtn.title=startRequestPending?'Permintaan OCR sedang dikirim. Jangan klik lagi.':
+        (workerNeedsAttention?'Worker tidak mengirim heartbeat terbaru. Periksa status sebelum melanjutkan.':
+        (backendActivelyWorking?'OCR berjalan di latar belakang. Tidak perlu menekan tombol lagi.':'Mulai atau lanjutkan antrean OCR untuk periode terpilih.'));
+      startBtn.setAttribute('aria-label',startBtn.textContent);
+      if(startRequestPending)startBtn.setAttribute('aria-busy','true');else startBtn.removeAttribute('aria-busy');
+    }
     if(pauseBtn)pauseBtn.disabled=paused||stopped||(!queued&&!processing&&!inventoryRunning);
     if(stopBtn)stopBtn.disabled=stopped||(!isRunning&&!queued&&!processing&&!inventoryRunning);
     const bh=wk.bku_heartbeat||{};
@@ -8980,16 +9027,30 @@ window._dinasMassOcrPollTimer=setInterval(function(){
 window.startOrResumeDinasMassOcr = async function(){
   const sel=$('#monitoringPeriodSelect'),btn=$('#massOcrStartBtn'),detail=$('#massOcrDetail');
   if(!sel||!sel.value){toast('Pilih periode aktif terlebih dahulu.','warning');return;}
+  // Guard lokal untuk menahan klik berulang selama permintaan start belum dijawab.
+  if(window._dinasOcrStartInflight)return;
   if(!confirm('Mulai atau lanjutkan OCR seluruh dokumen yang sudah diunggah pada periode aktif? Hasil yang sudah tersimpan tidak akan diulang.'))return;
-  btn.disabled=true;btn.textContent='Memulai OCR…';
+  const period=String(sel.value);
+  window._dinasOcrStartInflight=true;
+  if(btn){btn.disabled=true;btn.setAttribute('aria-busy','true');btn.textContent='Mengirim perintah OCR…';}
   try{
-    const r=await api('startDinasMassOcrBackfill',{idPeriode:sel.value});
-    toast('OCR seluruh dokumen mulai diproses. Hasil tersimpan dan dapat dilanjutkan kapan saja.','ok');
+    const r=await api('startDinasMassOcrBackfill',{idPeriode:period});
+    toast('Perintah OCR diterima. Pembacaan berjalan di latar belakang; Anda tidak perlu menekan tombol lagi.','ok');
     const inv=r.inventory||{};
-    detail.textContent=`Menyiapkan antrean: ${Number(inv.cursor||0)} dari ${Number(inv.discovered||0)} dokumen diperiksa.`;
+    if(detail)detail.textContent=`Menyiapkan antrean: ${Number(inv.cursor||0)} dari ${Number(inv.discovered||0)} dokumen diperiksa.`;
     await refreshDinasMassOcrStatus();
-  }catch(e){toast(errorText(e),'error');}
-  finally{btn.disabled=false;btn.textContent='Mulai / Lanjutkan OCR';}
+  }catch(e){
+    toast(errorText(e),'error');
+    if(detail)detail.textContent='Perintah OCR belum dapat dikonfirmasi. Perbarui status sebelum mencoba lagi agar tidak membuat permintaan berulang.';
+  }finally{
+    window._dinasOcrStartInflight=false;
+    if(btn&&document.contains(btn)){
+      btn.removeAttribute('aria-busy');
+      // Status berikutnya ditentukan oleh hasil pemantauan backend, bukan
+      // selalu dipaksa kembali ke label awal.
+      await refreshDinasMassOcrStatus();
+    }
+  }
 };
 
 
@@ -9365,492 +9426,100 @@ window.verifyFinding=async function(id){
 };
 
 
-
-async function masterSpjView() {
-  if (!isDinas()) {
-    $('#mainContent').innerHTML = msg(
-      'Modul ini hanya dapat digunakan oleh DINAS.'
-    );
-    return;
+async function masterSpjView(){
+  if(!isDinas()){ 
+    $('#mainContent').innerHTML = msg('Modul ini hanya dapat digunakan oleh DINAS.'); 
+    return; 
   }
-
-  // =====================================================
-  // 1. AMBIL DATA DARI BACKEND
-  // =====================================================
-
+  
+  // OPTIMASI: Manfaatkan cache master lokal untuk komponen SPJ
   const [cfg, indRes, perRes] = await Promise.all([
-    api('getFrekuensiPenilaianSPJ').catch(() => ({
-      frekuensi: '',
-      tahun: new Date().getFullYear()
-    })),
-
-    api('getMasterIndikator'),
-
+    api('getFrekuensiPenilaianSPJ').catch(() => ({ frekuensi: '', tahun: new Date().getFullYear() })),
+    api('getMasterIndikator'), 
     api('getPeriodeSPJ')
   ]);
-
+  
   const spj = await ensureMasters() || [];
+  const inds = indRes.data || [], pers = perRes.data || [];
+  const freq = String(cfg.frekuensi || perRes.frekuensi || '').toUpperCase();
+  const activePeriodId = String(cfg.periode_aktif || perRes.periode_aktif || '');
+  const rawYear = Number(cfg.tahun || perRes.tahun || new Date().getFullYear());
+  const year = rawYear>=2000&&rawYear<=2100 ? Math.floor(rawYear) : new Date().getFullYear();
+  const freqLabel = freq === 'BULANAN' ? 'Bulanan' : freq === 'TRIWULANAN' ? 'Triwulanan' : freq === 'SEMESTERAN' ? 'Semesteran' : freq === 'TAHUNAN' ? 'Tahunan' : 'Belum dipilih';
+  const activePeriods = pers.filter(x => Number(x.tahun) === year && String(x.frekuensi || '').toUpperCase() === freq);
 
-  const inds = Array.isArray(indRes.data)
-    ? indRes.data : [];
-
-  const pers = Array.isArray(perRes.data)
-    ? perRes.data : [];
-
-  // =====================================================
-  // 2. KONFIGURASI FREKUENSI DAN PERIODE
-  // =====================================================
-
-  const freq = String(
-    cfg.frekuensi || perRes.frekuensi || ''
-  ).toUpperCase();
-
-  const activePeriodId = String(
-    cfg.periode_aktif || perRes.periode_aktif || ''
-  );
-
-  const rawYear = Number(
-    cfg.tahun ||
-    perRes.tahun ||
-    new Date().getFullYear()
-  );
-
-  const year =
-    rawYear >= 2000 && rawYear <= 2100
-      ? Math.floor(rawYear)
-      : new Date().getFullYear();
-
-  const freqLabel =
-    freq === 'BULANAN' ? 'Bulanan' :
-    freq === 'TRIWULANAN' ? 'Triwulanan' :
-    freq === 'SEMESTERAN' ? 'Semesteran' :
-    freq === 'TAHUNAN' ? 'Tahunan' :
-    'Belum dipilih';
-
-  // =====================================================
-  // 3. FILTER PERIODE
-  // =====================================================
-  // Header periode_spj tidak memiliki kolom frekuensi.
-  // Karena itu, frekuensi pada setiap baris boleh kosong.
-  // Jika tersedia, frekuensinya tetap harus cocok.
-  // =====================================================
-
-  const activePeriods = pers.filter(x => {
-    const rowYear = Number(x.tahun);
-
-    const rowFreq = String(
-      x.frekuensi || ''
-    ).trim().toUpperCase();
-
-    const yearMatches = rowYear === year;
-
-    const freqMatches =
-      !rowFreq ||
-      !freq ||
-      rowFreq === freq;
-
-    return yearMatches && freqMatches;
-  });
-
-  // =====================================================
-  // 4. FORMAT TANGGAL
-  // =====================================================
-
-  function formatPeriodDate(value) {
-    if (!value) return '-';
-
-    const s = String(value).trim();
-
-    // Mengambil tanggal kalender dari format:
-    // 2026-06-30
-    // 2026-06-30T17:00:00.000Z
-    const match = s.match(
-      /^(\d{4})-(\d{2})-(\d{2})/
-    );
-
-    if (match) {
-      return `${match[3]}-${match[2]}-${match[1]}`;
-    }
-
-    return s;
-  }
-
-  // =====================================================
-  // 5. DIAGNOSTIK FRONTEND
-  // =====================================================
-
-  console.log('[QA38 PERIOD DIAGNOSTIC]', {
-    frequency: freq,
-    year: year,
-    activePeriodId: activePeriodId,
-    totalFromBackend: pers.length,
-    totalAfterFilter: activePeriods.length,
-    firstPeriod: pers[0] || null,
-    junePeriod: pers.find(x =>
-      String(x.id_periode) === 'PER-2026-06'
-    ) || null,
-    julyPeriod: pers.find(x =>
-      String(x.id_periode) === 'PER-2026-07'
-    ) || null
-  });
-
-  // =====================================================
-  // 6. RENDER MASTER SPJ
-  // =====================================================
-
+  // OPTIMASI: Rendering baris tabel menggunakan .map().join('') secara bersih di memori
   const spjRows = spj.map(x => `
     <tr>
       <td>${esc(x.kode_spj)}</td>
       <td>${esc(x.nama_spj)}</td>
       <td>${esc(x.urutan)}</td>
-      <td>${badge(
-        x.status_aktif,
-        x.status_aktif === 'AKTIF'
-          ? 'success' : 'warning'
-      )}</td>
-    </tr>
-  `).join('') || emptyRow(4);
-
-  // =====================================================
-  // 7. RENDER INDIKATOR
-  // =====================================================
+      <td>${badge(x.status_aktif, x.status_aktif === 'AKTIF' ? 'success' : 'warning')}</td>
+    </tr>`).join('') || emptyRow(4);
 
   const indRows = inds.map(x => `
     <tr>
       <td>${esc(x.kode_indikator)}</td>
       <td>${esc(x.nama_indikator)}</td>
-      <td>${esc(
-        spj.find(s =>
-          String(s.id_spj) === String(x.id_spj)
-        )?.nama_spj || x.id_spj
-      )}</td>
-      <td>${
-        String(x.metode_pemeriksaan || '')
-          .toUpperCase()
-          .includes('RISK_ENGINE')
-            ? 'DINAMIS'
-            : esc(x.bobot)
-      }</td>
-      <td>${badge(
-        x.status_aktif,
-        x.status_aktif === 'AKTIF'
-          ? 'success' : 'warning'
-      )}</td>
-    </tr>
-  `).join('') || emptyRow(5);
-
-  // =====================================================
-  // 8. RENDER PERIODE
-  // =====================================================
+      <td>${esc(spj.find(s => String(s.id_spj) === String(x.id_spj))?.nama_spj || x.id_spj)}</td>
+      <td>${String(x.metode_pemeriksaan || '').toUpperCase().includes('RISK_ENGINE') ? 'DINAMIS' : esc(x.bobot)}</td>
+      <td>${badge(x.status_aktif, x.status_aktif === 'AKTIF' ? 'success' : 'warning')}</td>
+    </tr>`).join('') || emptyRow(5);
 
   const perRows = activePeriods.map(x => `
     <tr>
-      <td>${esc(x.nama_periode || x.id_periode)}</td>
-      <td>${esc(rc2SafePeriodYear_(x) || year)}</td>
+      <td>${esc(x.nama_periode)}</td>
+      <td>${esc(rc2SafePeriodYear_(x)||year)}</td>
       <td>${esc(x.frekuensi || freqLabel)}</td>
-      <td>${esc(formatPeriodDate(x.tanggal_mulai))}</td>
-      <td>${esc(formatPeriodDate(x.tanggal_selesai))}</td>
-      <td>${badge(
-        x.status,
-        x.status === 'AKTIF'
-          ? 'success' : 'warning'
-      )}</td>
-    </tr>
-  `).join('') || emptyRow(6);
+      <td>${esc(String(x.tanggal_mulai || '-').replace(/T00:00:00\.000Z$/, ''))}</td>
+      <td>${esc(String(x.tanggal_selesai || '-').replace(/T00:00:00\.000Z$/, ''))}</td>
+      <td>${badge(x.status, x.status === 'AKTIF' ? 'success' : 'warning')}</td>
+    </tr>`).join('') || emptyRow(6);
 
-  // =====================================================
-  // 9. RENDER HALAMAN
-  // =====================================================
-
-  $('#mainContent').innerHTML =
-    head(
-      'Pengaturan Penilaian SPJ',
-      'DINAS cukup menentukan frekuensi penilaian. Periode dibuat otomatis oleh sistem.'
-    ) +
-
+  $('#mainContent').innerHTML = head('Pengaturan Penilaian SPJ', 'DINAS cukup menentukan frekuensi penilaian. Periode dibuat otomatis oleh sistem.') +
     `<div class="panel" style="border-top:4px solid var(--primary)">
       <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap">
-        <div>
-          <h3 style="margin:0">Frekuensi Penilaian</h3>
-          <div class="muted" style="margin-top:5px">
-            Pilih sekali untuk tahun penilaian.
-            Sistem otomatis membuat periode dan menggunakannya untuk seluruh sekolah.
-          </div>
-        </div>
-        <span class="badge badge-${freq ? 'success' : 'warning'}">
-          ${esc(freqLabel)} • ${esc(year)}
-        </span>
+        <div><h3 style="margin:0">Frekuensi Penilaian</h3><div class="muted" style="margin-top:5px">Pilih sekali untuk tahun penilaian. Sistem otomatis membuat periode dan menggunakannya untuk seluruh sekolah.</div></div>
+        <span class="badge badge-${freq ? 'success' : 'warning'}">${esc(freqLabel)} • ${esc(year)}</span>
       </div>
-
       <div class="form-grid" style="margin-top:16px">
-        <div class="field">
-          <label>Tahun Penilaian</label>
-          <input
-            id="cfgTahunPenilaian"
-            type="number"
-            min="2020"
-            max="2100"
-            value="${esc(year)}"
-          >
-        </div>
-
-        <div class="field">
-          <label>Frekuensi</label>
-          <select id="cfgFrekuensiPenilaian">
-            <option value="BULANAN" ${freq === 'BULANAN' ? 'selected' : ''}>Bulanan</option>
-            <option value="TRIWULANAN" ${freq === 'TRIWULANAN' ? 'selected' : ''}>Triwulanan</option>
-            <option value="SEMESTERAN" ${freq === 'SEMESTERAN' ? 'selected' : ''}>Semesteran</option>
-            <option value="TAHUNAN" ${freq === 'TAHUNAN' ? 'selected' : ''}>Tahunan</option>
-          </select>
-        </div>
+        <div class="field"><label>Tahun Penilaian</label><input id="cfgTahunPenilaian" type="number" min="2020" max="2100" value="${esc(year)}"></div>
+        <div class="field"><label>Frekuensi</label><select id="cfgFrekuensiPenilaian">
+          <option value="BULANAN" ${freq === 'BULANAN' ? 'selected' : ''}>Bulanan</option>
+          <option value="TRIWULANAN" ${freq === 'TRIWULANAN' ? 'selected' : ''}>Triwulanan</option>
+          <option value="SEMESTERAN" ${freq === 'SEMESTERAN' ? 'selected' : ''}>Semesteran</option>
+          <option value="TAHUNAN" ${freq === 'TAHUNAN' ? 'selected' : ''}>Tahunan</option>
+        </select></div>
       </div>
-
-      <div class="toolbar">
-        <button class="btn btn-primary" id="btnSimpanFrekuensi">
-          ✓ Terapkan Frekuensi
-        </button>
-      </div>
-
+      <div class="toolbar"><button class="btn btn-primary" id="btnSimpanFrekuensi">✓ Terapkan Frekuensi</button></div>
       <div id="freqConfigMsg"></div>
     </div>` +
-
-    `<div class="panel" style="border-left:4px solid var(--success)">
-      <h3 class="section-title" style="margin-top:0">
-        Periode Penilaian Aktif
-      </h3>
-
-      <p class="muted">
-        Pilih satu periode yang sedang dinilai.
-        Dokumen dan transaksi di periode lain tetap tersimpan sebagai arsip,
-        tetapi tidak masuk perhitungan penilaian aktif.
-      </p>
-
-      <div class="form-grid">
-        <div class="field">
-          <label>Periode aktif</label>
-
-          <select id="cfgActiveAssessmentPeriod">
-            <option value="">-- Pilih periode aktif --</option>
-
-            ${activePeriods.map(x => `
-              <option
-                value="${esc(x.id_periode)}"
-                ${String(x.id_periode) === activePeriodId ? 'selected' : ''}
-              >
-                ${esc(x.nama_periode || x.id_periode)}
-              </option>
-            `).join('')}
-          </select>
-        </div>
-
-        <div class="field" style="display:flex;align-items:end">
-          <button
-            class="btn btn-primary"
-            id="btnSaveActiveAssessmentPeriod"
-            type="button"
-          >
-            Tetapkan Periode Aktif
-          </button>
-        </div>
-      </div>
-
-      <div id="activePeriodConfigMsg">
-        ${
-          activePeriodId
-            ? `<span class="badge badge-success">
-                Aktif: ${esc(
-                  activePeriods.find(x =>
-                    String(x.id_periode) === activePeriodId
-                  )?.nama_periode || activePeriodId
-                )}
-              </span>`
-            : '<span class="badge badge-warning">Belum ada periode aktif yang dikunci</span>'
-        }
-      </div>
-    </div>` +
-
-    `<div class="panel">
-      <h3 class="section-title" style="margin-top:0">
-        Periode Otomatis (${activePeriods.length})
-      </h3>
-
-      <div class="muted" style="margin-bottom:10px">
-        Sistem membuat ${
-          freq === 'BULANAN' ? '12 periode bulanan' :
-          freq === 'TRIWULANAN' ? '4 periode triwulanan' :
-          freq === 'SEMESTERAN' ? '2 periode semesteran' :
-          freq === 'TAHUNAN' ? '1 periode tahunan' :
-          'periode sesuai pilihan'
-        } tanpa input tanggal manual.
-      </div>
-
-      <div class="table-wrap">
-        <table class="friendly-table">
-          <thead>
-            <tr>
-              <th>Nama</th>
-              <th>Tahun</th>
-              <th>Frekuensi</th>
-              <th>Mulai</th>
-              <th>Selesai</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>${perRows}</tbody>
-        </table>
-      </div>
-    </div>` +
-
-    `<div class="panel">
-      <h3 class="section-title" style="margin-top:0">
-        Standar Pemeriksaan Otomatis
-      </h3>
-
-      <p class="muted">
-        Indikator bawaan Risk Engine tampil otomatis.
-        DINAS tidak perlu membuat indikator atau rule satu per satu;
-        bobot yang ditampilkan sebagai DINAMIS dihitung ulang
-        berdasarkan data pemeriksaan.
-      </p>
-
-      <div class="table-wrap">
-        <table class="friendly-table">
-          <thead>
-            <tr>
-              <th>Kode</th>
-              <th>Indikator</th>
-              <th>Komponen</th>
-              <th>Bobot</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>${indRows}</tbody>
-        </table>
-      </div>
-    </div>` +
-
-    `<div class="panel">
-      <h3 class="section-title" style="margin-top:0">
-        Master SPJ Sistem
-      </h3>
-
-      <div class="table-wrap">
-        <table class="friendly-table">
-          <thead>
-            <tr>
-              <th>Kode</th>
-              <th>Nama</th>
-              <th>Urutan</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>${spjRows}</tbody>
-        </table>
-      </div>
-    </div>`;
-
-  // =====================================================
-  // 10. TOMBOL TERAPKAN FREKUENSI
-  // =====================================================
+    `<div class="panel" style="border-left:4px solid var(--success)"><h3 class="section-title" style="margin-top:0">Periode Penilaian Aktif</h3><p class="muted">Pilih satu periode yang sedang dinilai. Dokumen dan transaksi di periode lain tetap tersimpan sebagai arsip, tetapi tidak masuk perhitungan penilaian aktif.</p><div class="form-grid"><div class="field"><label>Periode aktif</label><select id="cfgActiveAssessmentPeriod"><option value="">-- Pilih periode aktif --</option>${activePeriods.map(x=>`<option value="${esc(x.id_periode)}" ${String(x.id_periode)===activePeriodId?'selected':''}>${esc(x.nama_periode||x.id_periode)}</option>`).join('')}</select></div><div class="field" style="display:flex;align-items:end"><button class="btn btn-primary" id="btnSaveActiveAssessmentPeriod" type="button">Tetapkan Periode Aktif</button></div></div><div id="activePeriodConfigMsg">${activePeriodId?`<span class="badge badge-success">Aktif: ${esc(activePeriods.find(x=>String(x.id_periode)===activePeriodId)?.nama_periode||activePeriodId)}</span>`:'<span class="badge badge-warning">Belum ada periode aktif yang dikunci</span>'}</div></div>` +
+    `<div class="panel"><h3 class="section-title" style="margin-top:0">Periode Otomatis (${activePeriods.length})</h3><div class="muted" style="margin-bottom:10px">Sistem membuat ${freq === 'BULANAN' ? '12 periode bulanan' : freq === 'TRIWULANAN' ? '4 periode triwulanan' : freq === 'SEMESTERAN' ? '2 periode semesteran' : freq === 'TAHUNAN' ? '1 periode tahunan' : 'periode sesuai pilihan'} tanpa input tanggal manual.</div><div class="table-wrap"><table class="friendly-table"><thead><tr><th>Nama</th><th>Tahun</th><th>Frekuensi</th><th>Mulai</th><th>Selesai</th><th>Status</th></tr></thead><tbody>${perRows}</tbody></table></div></div>` +
+    `<div class="panel"><h3 class="section-title" style="margin-top:0">Standar Pemeriksaan Otomatis</h3><p class="muted">Indikator bawaan Risk Engine tampil otomatis. DINAS tidak perlu membuat indikator atau rule satu per satu; bobot yang ditampilkan sebagai DINAMIS dihitung ulang berdasarkan data pemeriksaan.</p><div class="table-wrap"><table class="friendly-table"><thead><tr><th>Kode</th><th>Indikator</th><th>Komponen</th><th>Bobot</th><th>Status</th></tr></thead><tbody>${indRows}</tbody></table></div></div>` +
+    `<div class="panel"><h3 class="section-title" style="margin-top:0">Master SPJ Sistem</h3><div class="table-wrap"><table class="friendly-table"><thead><tr><th>Kode</th><th>Nama</th><th>Urutan</th><th>Status</th></tr></thead><tbody>${spjRows}</tbody></table></div></div>`;
 
   $('#btnSimpanFrekuensi').onclick = async () => {
-    const tahun = $('#cfgTahunPenilaian').value;
-    const frekuensi = $('#cfgFrekuensiPenilaian').value;
-
-    const out = $('#freqConfigMsg');
-
-    out.innerHTML = loading(
-      'Membuat periode otomatis...'
-    );
-
-    try {
-      await api('simpanFrekuensiPenilaianSPJ', {
-        data: {
-          tahun,
-          frekuensi
-        }
-      });
-
-      toast(
-        `Frekuensi ${frekuensi.toLowerCase()} berhasil diterapkan untuk ${tahun}.`,
-        'ok',
-        3500
-      );
-
-      await masterSpjView();
-
-    } catch (e) {
-      out.innerHTML = msg(
-        errorText(e),
-        'error'
-      );
+    const tahun = $('#cfgTahunPenilaian').value, frekuensi = $('#cfgFrekuensiPenilaian').value;
+    const out = $('#freqConfigMsg'); 
+    out.innerHTML = loading('Membuat periode otomatis...');
+    try { 
+      await api('simpanFrekuensiPenilaianSPJ', { data: { tahun, frekuensi } }); 
+      toast(`Frekuensi ${frekuensi.toLowerCase()} berhasil diterapkan untuk ${tahun}.`, 'ok', 3500); 
+      await masterSpjView(); 
+    } catch(e) { 
+      out.innerHTML = msg(errorText(e), 'error'); 
     }
   };
-
-  // =====================================================
-  // 11. TOMBOL TETAPKAN PERIODE AKTIF
-  // =====================================================
-
-  const activeBtn = $(
-    '#btnSaveActiveAssessmentPeriod'
-  );
-
-  if (activeBtn) {
-    activeBtn.onclick = async () => {
-
-      const idPeriode = $(
-        '#cfgActiveAssessmentPeriod'
-      )?.value || '';
-
-      const out = $(
-        '#activePeriodConfigMsg'
-      );
-
-      if (!idPeriode) {
-        if (out) {
-          out.innerHTML = msg(
-            'Pilih periode yang akan dinilai.',
-            'warning'
-          );
-        }
-        return;
-      }
-
-      activeBtn.disabled = true;
-      activeBtn.textContent = 'Menyimpan...';
-
-      try {
-        const r = await api(
-          'simpanPeriodeAktifPenilaianSPJ',
-          {
-            data: {
-              id_periode: idPeriode
-            }
-          }
-        );
-
-        toast(
-          r.message || 'Periode aktif ditetapkan.',
-          'ok',
-          3500
-        );
-
-        await masterSpjView();
-
-      } catch (e) {
-        if (out) {
-          out.innerHTML = msg(
-            errorText(e),
-            'error'
-          );
-        }
-
-      } finally {
-        activeBtn.disabled = false;
-        activeBtn.textContent = 'Tetapkan Periode Aktif';
-      }
-    };
-  }
+  const activeBtn=$('#btnSaveActiveAssessmentPeriod');
+  if(activeBtn)activeBtn.onclick=async()=>{
+    const idPeriode=$('#cfgActiveAssessmentPeriod')?.value||'',out=$('#activePeriodConfigMsg');
+    if(!idPeriode){if(out)out.innerHTML=msg('Pilih periode yang akan dinilai.','warning');return;}
+    activeBtn.disabled=true;activeBtn.textContent='Menyimpan...';
+    try{const r=await api('simpanPeriodeAktifPenilaianSPJ',{data:{id_periode:idPeriode}});toast(r.message||'Periode aktif ditetapkan.','ok',3500);await masterSpjView();}
+    catch(e){if(out)out.innerHTML=msg(errorText(e),'error');}
+    finally{activeBtn.disabled=false;activeBtn.textContent='Tetapkan Periode Aktif';}
+  };
 }
 
 function openMasterModal(title, body, onSubmit){
@@ -13225,7 +12894,7 @@ async function renderMonitoringGlobalView(mode) {
        <input id="searchGlobalMon" placeholder="🔍 Cari nama sekolah, NPSN, kecamatan..." style="max-width:350px" oninput="filterGlobalMon(this.value)">
        <div style="display:flex;gap:8px;align-items:center">
          <label for="monitoringPeriodSelect" style="font-weight:650">Periode:</label>
-         <select id="monitoringPeriodSelect" class="form-control" style="min-width:190px" onchange="refreshMonitoringProgressPeriod(this.value)">
+         <select id="monitoringPeriodSelect" class="form-control" style="min-width:190px" onchange="window.onMonitoringPeriodChange(this.value)">
            <option value="">Memuat periode...</option>
          </select>
        </div>
@@ -14699,21 +14368,8 @@ body.v219-auth-body::before{display:none!important}
 .v219-auth-captcha{color:#1D4E6F;font-weight:900;margin:4px 0 7px}
 .v219-auth-submit,.v219-register-submit{
   width:100%;min-height:48px;margin-top:8px;border:0;border-radius:12px;
-  background:linear-gradient(135deg,#102A43,#1D4E6F);color:#fff;font-weight:850;cursor:pointer;
-  transition:opacity .15s ease,filter .15s ease,transform .15s ease
+  background:linear-gradient(135deg,#102A43,#1D4E6F);color:#fff;font-weight:850;cursor:pointer
 }
-.v219-auth-submit:disabled{
-  cursor:wait;opacity:.78;filter:saturate(.72);transform:none;
-  box-shadow:none;pointer-events:none
-}
-.v219-auth-submit.is-loading::before{
-  content:'';display:inline-block;width:13px;height:13px;margin-right:9px;
-  border:2px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;
-  vertical-align:-2px;animation:simpelLoginSpin .75s linear infinite
-}
-@keyframes simpelLoginSpin{to{transform:rotate(360deg)}}
-.v219-auth-submit:focus-visible{outline:3px solid #75B8E8;outline-offset:3px}
-@media(prefers-reduced-motion:reduce){.v219-auth-submit{transition:none}.v219-auth-submit.is-loading::before{animation:none;border-top-color:rgba(255,255,255,.8)}}
 .v219-role-row{
   display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:14px
 }
@@ -17391,6 +17047,27 @@ body.v219-auth-body{
 .v219-auth-form .secure-check-card.checked .secure-check-copy strong,
 .v219-auth-form .secure-check-card.checked .secure-check-status,
 .v219-auth-form .secure-check-card.checked .secure-check-action{color:#176c49!important}
+
+/* Login request feedback: make the first click immediately visible. */
+.v219-auth-submit[aria-busy="true"],
+.v219-auth-submit:disabled{
+  opacity:.72;
+  cursor:wait;
+  transform:none!important;
+  box-shadow:none!important;
+}
+.login-submitting .v219-auth-submit::before{
+  content:"";
+  display:inline-block;
+  width:13px;height:13px;
+  margin-right:9px;
+  vertical-align:-2px;
+  border:2px solid currentColor;
+  border-right-color:transparent;
+  border-radius:50%;
+  animation:simpelLoginSpin .7s linear infinite;
+}
+@keyframes simpelLoginSpin{to{transform:rotate(360deg)}}
 
 .v219-auth-submit{
   min-height:52px!important;margin-top:10px!important;border-radius:13px!important;
